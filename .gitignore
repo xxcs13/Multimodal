@@ -1,9 +1,7 @@
 __pycache__/
 .pytest_cache/
-config/
 data/
+docs/
 tests/
 .env
-fix.md
-rule.md
-idea.md
+
