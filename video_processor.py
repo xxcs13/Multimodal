@@ -336,7 +336,7 @@ class ClipAnalyzer:
                 model_name=self.model_name,
                 messages=[message],
                 temperature=0.1,
-                max_tokens=500,
+                max_tokens=4096,
                 retry_count=2
             )
             
@@ -406,7 +406,7 @@ class ClipAnalyzer:
                 model_name=config.llm_model_summarization,
                 messages=[message],
                 temperature=0.3,
-                max_tokens=200,
+                max_tokens=4096,
                 retry_count=1
             )
             
@@ -538,14 +538,20 @@ class ClipAnalyzer:
         return {
             "clip_summary": description,
             "events": [{
-                "local_event_id": "E1",
                 "summary": description,
-                "time_start": 0.0,
-                "time_end": end_time - start_time,
-                "actors": characters[:3] if characters else [],
-                "objects": [],
+                "time_within_clip_start": 0.0,
+                "time_within_clip_end": end_time - start_time,
+                "characters_involved": characters[:3] if characters else [],
+                "objects_mentioned": [],
+                "key_actions": [],
+                # "local_event_id": "E1",
+                # "summary": description,
+                # "time_start": 0.0,
+                # "time_end": end_time - start_time,
+                # "actors": characters[:3] if characters else [],
+                # "objects": [],
                 "dialogue": dialogues[:5] if dialogues else [],
-                "actions": []
+                # "actions": []
             }],
             "characters": [
                 {"local_character_id": f"C{i+1}", "name_or_description": desc}
