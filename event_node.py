@@ -99,7 +99,15 @@ class AdaptiveEventNode:
         Returns:
             List of verb strings.
         """
-        return [action.get("verb", "") for action in self.actions if action.get("verb")]
+        verbs = []
+        for action in self.actions:
+            if isinstance(action, dict):
+                verb = action.get("verb", "")
+                if verb:
+                    verbs.append(verb)
+            elif isinstance(action, str) and action:
+                verbs.append(action)
+        return verbs
     
     def get_action_objects(self) -> List[str]:
         """
@@ -108,7 +116,13 @@ class AdaptiveEventNode:
         Returns:
             List of object strings from actions.
         """
-        return [action.get("object", "") for action in self.actions if action.get("object")]
+        objects = []
+        for action in self.actions:
+            if isinstance(action, dict):
+                obj = action.get("object", "")
+                if obj:
+                    objects.append(obj)
+        return objects
     
     def has_state_change_action(self, state_change_verbs: set) -> bool:
         """
@@ -121,7 +135,12 @@ class AdaptiveEventNode:
             True if any action verb indicates a state change.
         """
         for action in self.actions:
-            verb = action.get("verb", "").lower()
+            if isinstance(action, dict):
+                verb = action.get("verb", "").lower()
+            elif isinstance(action, str):
+                verb = action.lower()
+            else:
+                continue
             for sv in state_change_verbs:
                 if sv in verb:
                     return True

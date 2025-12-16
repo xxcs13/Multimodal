@@ -538,12 +538,14 @@ class ClipAnalyzer:
         return {
             "clip_summary": description,
             "events": [{
-                "sub_clip_summary": description,
-                "time_within_clip_start": 0.0,
-                "time_within_clip_end": end_time - start_time,
-                "characters_involved": characters[:3] if characters else [],
-                "objects_mentioned": [],
-                "key_actions": []
+                "local_event_id": "E1",
+                "summary": description,
+                "time_start": 0.0,
+                "time_end": end_time - start_time,
+                "actors": characters[:3] if characters else [],
+                "objects": [],
+                "dialogue": dialogues[:5] if dialogues else [],
+                "actions": []
             }],
             "characters": [
                 {"local_character_id": f"C{i+1}", "name_or_description": desc}

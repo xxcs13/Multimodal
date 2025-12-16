@@ -318,8 +318,17 @@ class AMRGraph:
         state_change_verbs = self._config.state_change_verbs
         
         for action in node.actions:
-            verb = action.get("verb", "").lower()
-            obj = action.get("object", "")
+            # Handle both dict format and string format defensively
+            if isinstance(action, dict):
+                verb = action.get("verb", "").lower()
+                obj = action.get("object", "")
+            elif isinstance(action, str):
+                # If action is a string, try to extract verb-object pattern
+                # or skip if no clear object can be identified
+                verb = action.lower()
+                obj = ""
+            else:
+                continue
             
             if not obj:
                 continue
