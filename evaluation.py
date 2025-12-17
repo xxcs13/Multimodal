@@ -262,24 +262,9 @@ class ResultTracker:
             "total_time": sum(self.timing.values())
         }
     
-    def save_results(self, filepath: str) -> None:
-        """
-        Save results to JSONL file.
-        
-        Args:
-            filepath: Path to save results.
-        """
-        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
-        
-        with open(filepath, "w", encoding="utf-8") as f:
-            for result in self.results:
-                f.write(json.dumps(result, ensure_ascii=False) + "\n")
-        
-        logger.info(f"Saved {len(self.results)} results to {filepath}")
-    
     def save_summary(self, filepath: str) -> None:
         """
-        Save summary to JSON file.
+        Save complete summary including results to JSON file.
         
         Args:
             filepath: Path to save summary.
@@ -294,41 +279,95 @@ class ResultTracker:
         
         logger.info(f"Saved summary to {filepath}")
     
-    def save_timing_report(self, filepath: str) -> None:
+    def save_comprehensive_table(self, filepath: str) -> None:
         """
-        Save detailed timing report.
+        Save comprehensive table including timing report, evaluation results table, and metrics.
         
         Args:
-            filepath: Path to save timing report.
+            filepath: Path to save comprehensive table.
         """
         Path(filepath).parent.mkdir(parents=True, exist_ok=True)
         
         total_time = sum(self.timing.values())
+        accuracy = self.get_accuracy()
+        
+        # Define the 5 question types from M3-Bench
+        question_types = [
+            "Person Understanding",
+            "Cross-Modal Reasoning",
+            "Multi-Hop Reasoning",
+            "Multi-Detail Reasoning",
+            "Temporal Reasoning"
+        ]
+        
+        # Get counts by type
+        type_counts = self.get_counts_by_type()
         
         report_lines = [
-            "=" * 60,
-            "TIMING REPORT",
-            "=" * 60,
+            "=" * 70,
+            "COMPREHENSIVE EVALUATION REPORT",
+            "=" * 70,
             f"Generated: {datetime.now().isoformat()}",
             "",
+            "=" * 70,
+            "TIMING REPORT",
+            "=" * 70,
+            "",
             "Stage Breakdown:",
-            "-" * 40
+            "-" * 50
         ]
         
         for stage, duration in sorted(self.timing.items(), key=lambda x: -x[1]):
             percentage = (duration / total_time * 100) if total_time > 0 else 0
-            report_lines.append(f"  {stage:30s}: {duration:8.2f}s ({percentage:5.1f}%)")
+            report_lines.append(f"  {stage:<35}: {duration:8.2f}s ({percentage:5.1f}%)")
         
         report_lines.extend([
-            "-" * 40,
-            f"  {'TOTAL':30s}: {total_time:8.2f}s",
+            "-" * 50,
+            f"  {'TOTAL':<35}: {total_time:8.2f}s",
+            ""
+        ])
+        
+        # Add evaluation results table
+        report_lines.extend([
+            "=" * 70,
+            "EVALUATION RESULTS TABLE",
+            "=" * 70,
+            f"{'Question Type':<30} | {'Correct':<10} | {'Total':<10} | {'Accuracy':<10}",
+            "-" * 70
+        ])
+        
+        # Add each standard M3-Bench type
+        for q_type in question_types:
+            if q_type in type_counts:
+                counts = type_counts[q_type]
+                correct = counts["correct"]
+                total = counts["total"]
+                type_acc = correct / total if total > 0 else 0
+                report_lines.append(f"{q_type:<30} | {correct:<10} | {total:<10} | {type_acc:.2%}")
+        
+        # Add any other types not in the standard list
+        for q_type, counts in sorted(type_counts.items()):
+            if q_type not in question_types:
+                correct = counts["correct"]
+                total = counts["total"]
+                type_acc = correct / total if total > 0 else 0
+                report_lines.append(f"{q_type:<30} | {correct:<10} | {total:<10} | {type_acc:.2%}")
+        
+        report_lines.append("-" * 70)
+        
+        # Add overall accuracy
+        total_correct = sum(1 for r in self.results if r["is_correct"])
+        total_questions = len(self.results)
+        report_lines.extend([
+            f"{'OVERALL':<30} | {total_correct:<10} | {total_questions:<10} | {accuracy:.2%}",
+            "=" * 70,
             "",
-            "Performance Metrics:",
-            "-" * 40,
-            f"  Questions processed: {len(self.results)}",
-            f"  Accuracy: {self.get_accuracy():.2%}",
-            f"  Avg time per question: {total_time / max(len(self.results), 1):.2f}s",
-            "=" * 60
+            "PERFORMANCE METRICS:",
+            "-" * 50,
+            f"  Questions processed: {total_questions}",
+            f"  Overall accuracy: {accuracy:.2%}",
+            f"  Avg time per question: {total_time / max(total_questions, 1):.2f}s",
+            "=" * 70
         ])
         
         report = "\n".join(report_lines)
@@ -336,10 +375,7 @@ class ResultTracker:
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(report)
         
-        logger.info(f"Saved timing report to {filepath}")
-        
-        # Also print to console
-        print(report)
+        logger.info(f"Saved comprehensive table to {filepath}")
 
 
 def load_qa_data(annotation_path: str, video_name: Optional[str] = None) -> List[Dict[str, Any]]:
