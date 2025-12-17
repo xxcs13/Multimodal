@@ -278,7 +278,7 @@ class FAISSIndex:
             self._index_built = False
     
     def _build_index(self) -> None:
-        """Build or rebuild the FAISS index."""
+        """Build or rebuild the FAISS index with GPU acceleration if available."""
         try:
             import faiss
         except ImportError:
@@ -296,8 +296,18 @@ class FAISSIndex:
         self._id_map = list(self.embeddings.keys())
         embedding_matrix = np.stack([self.embeddings[i] for i in self._id_map])
         
-        # Create flat index
-        self._faiss_index = faiss.IndexFlatIP(self.dimension)  # Inner product
+        # Create flat index with GPU acceleration if available
+        cpu_index = faiss.IndexFlatIP(self.dimension)  # Inner product
+        
+        # Try to use GPU if available
+        try:
+            res = faiss.StandardGpuResources()
+            self._faiss_index = faiss.index_cpu_to_gpu(res, 0, cpu_index)
+            logger.info("Using GPU-accelerated FAISS index")
+        except (RuntimeError, AttributeError):
+            # GPU not available or not supported, use CPU
+            self._faiss_index = cpu_index
+            logger.info("Using CPU-based FAISS index")
         
         # Normalize for cosine similarity
         faiss.normalize_L2(embedding_matrix)
