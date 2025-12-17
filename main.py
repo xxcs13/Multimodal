@@ -44,7 +44,7 @@ from evaluation import (
 logger = logging.getLogger(__name__)
 
 
-def print_results_table(tracker: ResultTracker) -> None:
+def print_results_table(tracker: ResultTracker, save_path: Optional[str] = None) -> None:
     """
     Print evaluation results in a formatted table.
     
@@ -52,9 +52,9 @@ def print_results_table(tracker: ResultTracker) -> None:
     
     Args:
         tracker: ResultTracker containing evaluation results.
+        save_path: Optional path to save the table to file.
     """
     accuracy = tracker.get_accuracy()
-    accuracy_by_type = tracker.get_accuracy_by_type()
     
     # Define the 5 question types from M3-Bench
     question_types = [
@@ -62,57 +62,63 @@ def print_results_table(tracker: ResultTracker) -> None:
         "Cross-Modal Reasoning", 
         "Multi-Hop Reasoning",
         "Multi-Detail Reasoning",
-        "Temporal Reasoning"  # May not appear in all videos
+        "Temporal Reasoning"
     ]
     
-    # Build table
-    print("\n" + "=" * 70)
-    print("EVALUATION RESULTS TABLE")
-    print("=" * 70)
-    print(f"{'Question Type':<30} | {'Correct':<10} | {'Total':<10} | {'Accuracy':<10}")
-    print("-" * 70)
+    # Get counts by type (handles multiple types per question)
+    type_counts = tracker.get_counts_by_type()
     
-    # Count correct/total by type
-    type_counts = {}
-    for result in tracker.results:
-        q_type = result.get("metadata", {}).get("question_type", "Unknown")
-        if q_type not in type_counts:
-            type_counts[q_type] = {"correct": 0, "total": 0}
-        type_counts[q_type]["total"] += 1
-        if result["is_correct"]:
-            type_counts[q_type]["correct"] += 1
+    # Build table lines
+    table_lines = []
+    table_lines.append("=" * 70)
+    table_lines.append("EVALUATION RESULTS TABLE")
+    table_lines.append("=" * 70)
+    table_lines.append(f"{'Question Type':<30} | {'Correct':<10} | {'Total':<10} | {'Accuracy':<10}")
+    table_lines.append("-" * 70)
     
-    # Print each type
+    # Add each standard M3-Bench type
     for q_type in question_types:
         if q_type in type_counts:
             counts = type_counts[q_type]
             acc = counts["correct"] / counts["total"] if counts["total"] > 0 else 0
-            print(f"{q_type:<30} | {counts['correct']:<10} | {counts['total']:<10} | {acc:.2%}")
+            table_lines.append(f"{q_type:<30} | {counts['correct']:<10} | {counts['total']:<10} | {acc:.2%}")
     
-    # Print any other types not in the standard list
-    for q_type, counts in type_counts.items():
+    # Add any other types not in the standard list
+    for q_type, counts in sorted(type_counts.items()):
         if q_type not in question_types:
             acc = counts["correct"] / counts["total"] if counts["total"] > 0 else 0
-            print(f"{q_type:<30} | {counts['correct']:<10} | {counts['total']:<10} | {acc:.2%}")
+            table_lines.append(f"{q_type:<30} | {counts['correct']:<10} | {counts['total']:<10} | {acc:.2%}")
     
-    print("-" * 70)
+    table_lines.append("-" * 70)
     
-    # Print overall
+    # Add overall (direct count of correct questions, not aggregated by type)
     total_correct = sum(1 for r in tracker.results if r["is_correct"])
     total = len(tracker.results)
-    print(f"{'OVERALL':<30} | {total_correct:<10} | {total:<10} | {accuracy:.2%}")
-    print("=" * 70)
+    table_lines.append(f"{'OVERALL':<30} | {total_correct:<10} | {total:<10} | {accuracy:.2%}")
+    table_lines.append("=" * 70)
     
-    # Print timing summary
-    print("\nTIMING BREAKDOWN:")
-    print("-" * 50)
+    # Add timing summary
+    table_lines.append("")
+    table_lines.append("TIMING BREAKDOWN:")
+    table_lines.append("-" * 50)
     total_time = sum(tracker.timing.values())
     for stage, duration in sorted(tracker.timing.items(), key=lambda x: -x[1]):
         pct = (duration / total_time * 100) if total_time > 0 else 0
-        print(f"  {stage:<35}: {duration:8.2f}s ({pct:5.1f}%)")
-    print("-" * 50)
-    print(f"  {'TOTAL TIME':<35}: {total_time:8.2f}s")
-    print("=" * 70)
+        table_lines.append(f"  {stage:<35}: {duration:8.2f}s ({pct:5.1f}%)")
+    table_lines.append("-" * 50)
+    table_lines.append(f"  {'TOTAL TIME':<35}: {total_time:8.2f}s")
+    table_lines.append("=" * 70)
+    
+    # Print to console
+    for line in table_lines:
+        print(line)
+    
+    # Save to file if path provided
+    if save_path:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(save_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(table_lines))
+        logger.info(f"Saved results table to {save_path}")
 
 
 def setup_logging(log_level: str = "INFO", log_file: Optional[str] = None):
@@ -289,7 +295,7 @@ def run_qa_evaluation(
                 predicted=predicted,
                 is_correct=is_correct,
                 metadata={
-                    "question_type": question_type[0] if question_type else "Unknown",
+                    "question_types": question_type if question_type else ["Unknown"],
                     "anchor_count": len(result.anchor_nodes),
                     "navigated_count": len(result.navigated_nodes),
                     "verified_count": len(result.verified_nodes),
@@ -347,7 +353,7 @@ def main():
     
     # Build command
     build_parser = subparsers.add_parser("build", help="Build memory graph from video")
-    build_parser.add_argument("video_path", help="Path to video file")
+    build_parser.add_argument("--video_path", help="Path to video file")
     build_parser.add_argument("--output", "-o", help="Output path for graph JSON")
     build_parser.add_argument("--max-clips", type=int, help="Maximum clips to process")
     build_parser.add_argument("--clip-duration", type=float, default=None,
@@ -355,7 +361,7 @@ def main():
     
     # Evaluate command
     eval_parser = subparsers.add_parser("evaluate", help="Run QA evaluation")
-    eval_parser.add_argument("video_path", help="Path to video file")
+    eval_parser.add_argument("--video_path", help="Path to video file")
     eval_parser.add_argument("--annotations", "-a", 
                             default=str(PROJECT_ROOT / "data" / "annotations" / "robot.json"),
                             help="Path to annotations file")
@@ -456,8 +462,9 @@ def main():
         # Print detailed results
         print("\n" + format_results_for_comparison(result_tracker.results))
         
-        # Print results table (rule.md item 15)
-        print_results_table(result_tracker)
+        # Print and save results table 
+        table_path = os.path.join(args.output_dir, f"{video_name}_acctable.txt")
+        print_results_table(result_tracker, save_path=table_path)
     
     elif args.command == "query":
         # Load graph
