@@ -172,6 +172,10 @@ class ResultTracker:
         """
         Calculate overall accuracy.
         
+        Counts the number of questions answered correctly out of total questions.
+        This is a direct count, not aggregated by question type, since questions
+        can have multiple types.
+        
         Returns:
             Accuracy as a float between 0 and 1.
         """
@@ -185,21 +189,62 @@ class ResultTracker:
         """
         Calculate accuracy by question type.
         
+        Handles questions with multiple types by counting each type separately.
+        
         Returns:
             Dictionary mapping question type to accuracy.
         """
         type_results: Dict[str, List[bool]] = {}
         
         for result in self.results:
-            q_type = result.get("metadata", {}).get("question_type", "Unknown")
-            if q_type not in type_results:
-                type_results[q_type] = []
-            type_results[q_type].append(result["is_correct"])
+            q_types = result.get("metadata", {}).get("question_types", [])
+            
+            # Handle both list and single string formats
+            if isinstance(q_types, str):
+                q_types = [q_types]
+            elif not q_types:
+                q_types = ["Unknown"]
+            
+            # Add result to all applicable types
+            for q_type in q_types:
+                if q_type not in type_results:
+                    type_results[q_type] = []
+                type_results[q_type].append(result["is_correct"])
         
         return {
             q_type: sum(results) / len(results) if results else 0.0
             for q_type, results in type_results.items()
         }
+    
+    def get_counts_by_type(self) -> Dict[str, Dict[str, int]]:
+        """
+        Get correct/total counts by question type.
+        
+        Handles questions with multiple types by counting each type separately.
+        
+        Returns:
+            Dictionary mapping question type to {"correct": int, "total": int}.
+        """
+        type_counts: Dict[str, Dict[str, int]] = {}
+        
+        for result in self.results:
+            q_types = result.get("metadata", {}).get("question_types", [])
+            
+            # Handle both list and single string formats
+            if isinstance(q_types, str):
+                q_types = [q_types]
+            elif not q_types:
+                q_types = ["Unknown"]
+            
+            # Add result to all applicable types
+            for q_type in q_types:
+                if q_type not in type_counts:
+                    type_counts[q_type] = {"correct": 0, "total": 0}
+                type_counts[q_type]["total"] += 1
+                if result["is_correct"]:
+                    type_counts[q_type]["correct"] += 1
+        
+        return type_counts
     
     def get_summary(self) -> Dict[str, Any]:
         """
@@ -363,8 +408,12 @@ def format_results_for_comparison(
         
         if "metadata" in result:
             meta = result["metadata"]
-            if "question_type" in meta:
-                lines.append(f"Type: {meta['question_type']}")
+            if "question_types" in meta:
+                types = meta["question_types"]
+                if isinstance(types, list):
+                    lines.append(f"Type: {', '.join(types)}")
+                else:
+                    lines.append(f"Type: {types}")
     
     lines.append(f"\n{'='*60}")
     
