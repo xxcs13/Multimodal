@@ -229,6 +229,23 @@ Reasoning: [Your reasoning here]
 Answer: [Your final answer here]"""
 
 
+PROMPT_INTEGRATE_CONTEXT = """You are given a list of event descriptions that are relevant to answering a question. Your task is to integrate and summarize these events into a coherent narrative that provides context for answering the question.
+
+Question: {question}
+
+Events (ordered by time):
+{events}
+
+Requirements:
+1. Synthesize the events into a natural, flowing narrative
+2. Preserve all important details relevant to the question
+3. Maintain temporal order and relationships between events
+4. Remove redundant information while keeping key facts
+5. Be concise but comprehensive
+
+Integrated Context:"""
+
+
 # =============================================================================
 # Evaluation Prompts
 # =============================================================================
