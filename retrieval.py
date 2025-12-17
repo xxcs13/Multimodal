@@ -26,6 +26,7 @@ from prompts import (
     PROMPT_RELEVANCE_SCORING,
     PROMPT_FINAL_ANSWER,
     PROMPT_ANSWER_WITH_REASONING,
+    PROMPT_INTEGRATE_CONTEXT,
     format_events_for_context
 )
 from event_node import AdaptiveEventNode
@@ -434,19 +435,38 @@ class AnswerGenerator:
             key=lambda nid: self.graph.nodes[nid].time_start
         )
         
-        # Build context
-        context_parts = []
+        # Build event descriptions
+        event_descriptions = []
         for nid in sorted_nodes:
             node = self.graph.nodes[nid]
             time_str = f"[{node.time_start:.1f}s - {node.time_end:.1f}s]"
-            context_parts.append(f"{time_str} {node.summary_text}")
+            event_text = f"{time_str} {node.summary_text}"
             
             # Add key dialogue if present
             if node.dialogue_snippets:
-                dialogue_str = " | ".join(node.dialogue_snippets[:3])
-                context_parts.append(f"  Dialogue: {dialogue_str}")
+                dialogue_str = ", ".join(node.dialogue_snippets[:3])
+                event_text += f" (Dialogue: {dialogue_str})"
+            
+            event_descriptions.append(event_text)
         
-        context_text = "\n".join(context_parts)
+        events_text = "\n".join(event_descriptions)
+        
+        # Use LLM to integrate context
+        try:
+            integration_prompt = PROMPT_INTEGRATE_CONTEXT.format(
+                question=question,
+                events=events_text
+            )
+            context_text, _ = call_llm_with_retry(
+                model_name="openai/gpt-4o-mini",
+                messages=[build_text_message(integration_prompt)],
+                temperature=0.3,
+                max_tokens=1000
+            )
+            context_text = context_text.strip()
+        except Exception as e:
+            logger.warning(f"Context integration failed, using simple concatenation: {e}")
+            context_text = events_text
         
         # Select prompt
         if include_reasoning:
@@ -570,16 +590,38 @@ class RetrievalPipeline:
         logger.info(f"Verified {len(verified_nodes)} relevant nodes")
         metadata["verification_scores"] = dict(verified)
         
-        # Build context text
+        # Build context text using LLM integration
         sorted_verified = sorted(
             verified_nodes,
             key=lambda nid: self.graph.nodes[nid].time_start
         )
-        context_parts = []
+        
+        # Build event descriptions
+        event_descriptions = []
         for nid in sorted_verified:
             node = self.graph.nodes[nid]
-            context_parts.append(node.summary_text)
-        context_text = " | ".join(context_parts)
+            time_str = f"[{node.time_start:.1f}s - {node.time_end:.1f}s]"
+            event_text = f"{time_str} {node.summary_text}"
+            event_descriptions.append(event_text)
+        
+        events_text = "\n".join(event_descriptions)
+        
+        # Use LLM to integrate context
+        try:
+            integration_prompt = PROMPT_INTEGRATE_CONTEXT.format(
+                question=question,
+                events=events_text
+            )
+            context_text, _ = call_llm_with_retry(
+                model_name="openai/gpt-4o-mini",
+                messages=[build_text_message(integration_prompt)],
+                temperature=0.3,
+                max_tokens=1000
+            )
+            context_text = context_text.strip()
+        except Exception as e:
+            logger.warning(f"Context integration failed, using simple concatenation: {e}")
+            context_text = events_text
         
         # Generate final answer
         final_answer = self.answer_generator.generate(verified_nodes, question)
