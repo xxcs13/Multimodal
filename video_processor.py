@@ -139,6 +139,10 @@ def generate_clip_segments(
 class ClipAnalyzer:
     """
     Analyzes video clips using multimodal LLM to extract structured events.
+    
+    Supports switching between different multimodal providers:
+    - "qwen": Local Qwen2.5-Omni-3B model (default)
+    - "gemini": Gemini via OpenRouter API
     """
     
     def __init__(self, model_name: Optional[str] = None):
@@ -146,11 +150,13 @@ class ClipAnalyzer:
         Initialize the clip analyzer.
         
         Args:
-            model_name: LLM model to use for analysis.
+            model_name: LLM model to use for analysis (used for Gemini provider).
         """
         config = get_pipeline_config()
-        self.model_name = model_name or config.llm_model_clip_analysis
+        self.model_name = model_name or config.gemini_model
+        self.multimodal_provider = config.multimodal_provider
         self._temp_dir = None
+        logger.info(f"ClipAnalyzer initialized with provider: {self.multimodal_provider}")
     
     def analyze_clip(
         self,
@@ -163,6 +169,8 @@ class ClipAnalyzer:
     ) -> Dict[str, Any]:
         """
         Analyze a video clip and extract structured event information.
+        
+        Routes to appropriate analysis method based on configured multimodal provider.
         
         Args:
             video_path: Path to the full video.
@@ -185,58 +193,28 @@ class ClipAnalyzer:
         try:
             extract_clip(video_path, clip_path, start_time, duration)
             
-            # Convert clip to base64
-            clip_base64 = video_to_base64(clip_path)
-            
-            # Build message with video and prompt
-            message = build_multimodal_message(
-                text=PROMPT_CLIP_ANALYSIS,
-                video_base64=clip_base64
-            )
-            
-            # Call LLM
-            response, tokens = call_llm_with_retry(
-                model_name=self.model_name,
-                messages=[message],
-                temperature=0.1,
-                max_tokens=4096
-            )
-            
-            logger.debug(f"Clip {clip_id} analysis used {tokens} tokens")
-            
-            # Parse JSON response
-            try:
-                result = parse_json_response(response)
-            except json.JSONDecodeError as e:
-                # Retry with stricter prompt
-                logger.warning(f"JSON parse failed for {clip_id}, retrying with strict prompt")
-                
-                message = build_multimodal_message(
-                    text=PROMPT_CLIP_ANALYSIS_STRICT_JSON,
-                    video_base64=clip_base64
+            # Route to appropriate analysis method based on provider
+            if self.multimodal_provider == "qwen":
+                result = self._analyze_with_qwen(
+                    clip_path=clip_path,
+                    clip_id=clip_id,
+                    start_time=start_time,
+                    end_time=end_time,
+                    video_path=video_path,
+                    prev_summary=prev_summary,
+                    next_summary=next_summary
                 )
-                
-                response, _ = call_llm_with_retry(
-                    model_name=self.model_name,
-                    messages=[message],
-                    temperature=0.0,
-                    max_tokens=4096
+            else:
+                # Default to Gemini via API
+                result = self._analyze_with_gemini(
+                    clip_path=clip_path,
+                    clip_id=clip_id,
+                    start_time=start_time,
+                    end_time=end_time,
+                    video_path=video_path,
+                    prev_summary=prev_summary,
+                    next_summary=next_summary
                 )
-                
-                try:
-                    result = parse_json_response(response)
-                except json.JSONDecodeError as e2:
-                    # Use multi-level fallback strategy
-                    logger.warning(f"JSON parse still failed for {clip_id}, using multi-level fallback")
-                    result = self._create_fallback_result(
-                        response=response,
-                        clip_id=clip_id,
-                        start_time=start_time,
-                        end_time=end_time,
-                        video_path=video_path,
-                        prev_summary=prev_summary,
-                        next_summary=next_summary
-                    )
             
             # Add metadata
             result["clip_id"] = clip_id
@@ -249,6 +227,163 @@ class ClipAnalyzer:
             # Cleanup temp clip
             if os.path.exists(clip_path):
                 os.remove(clip_path)
+    
+    def _analyze_with_qwen(
+        self,
+        clip_path: str,
+        clip_id: str,
+        start_time: float,
+        end_time: float,
+        video_path: str,
+        prev_summary: Optional[str] = None,
+        next_summary: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Analyze clip using local Qwen2.5-Omni-3B model.
+        
+        Args:
+            clip_path: Path to the extracted clip file.
+            clip_id: Identifier for this clip.
+            start_time: Clip start time in seconds.
+            end_time: Clip end time in seconds.
+            video_path: Path to the original full video (for fallback).
+            prev_summary: Summary from previous clip for fallback.
+            next_summary: Summary from next clip for fallback.
+            
+        Returns:
+            Dictionary containing parsed clip analysis.
+        """
+        from qwen_provider import analyze_video_with_qwen
+        
+        try:
+            # Call Qwen model with clip path directly (supports audio)
+            response, tokens = analyze_video_with_qwen(
+                video_path=clip_path,
+                prompt=PROMPT_CLIP_ANALYSIS
+            )
+            
+            logger.debug(f"Clip {clip_id} Qwen analysis used {tokens} tokens")
+            
+            # Parse JSON response
+            try:
+                result = parse_json_response(response)
+                return result
+            except json.JSONDecodeError:
+                # Retry with stricter prompt
+                logger.warning(f"JSON parse failed for {clip_id}, retrying with strict prompt")
+                
+                response, _ = analyze_video_with_qwen(
+                    video_path=clip_path,
+                    prompt=PROMPT_CLIP_ANALYSIS_STRICT_JSON,
+                    temperature=0.0
+                )
+                
+                try:
+                    result = parse_json_response(response)
+                    return result
+                except json.JSONDecodeError:
+                    logger.warning(f"JSON parse still failed for {clip_id}, using fallback")
+                    return self._create_fallback_result(
+                        response=response,
+                        clip_id=clip_id,
+                        start_time=start_time,
+                        end_time=end_time,
+                        video_path=video_path,
+                        prev_summary=prev_summary,
+                        next_summary=next_summary
+                    )
+                    
+        except Exception as e:
+            logger.error(f"Qwen analysis failed for {clip_id}: {e}")
+            # Fall back to creating a placeholder result
+            return self._create_fallback_result(
+                response="",
+                clip_id=clip_id,
+                start_time=start_time,
+                end_time=end_time,
+                video_path=video_path,
+                prev_summary=prev_summary,
+                next_summary=next_summary
+            )
+    
+    def _analyze_with_gemini(
+        self,
+        clip_path: str,
+        clip_id: str,
+        start_time: float,
+        end_time: float,
+        video_path: str,
+        prev_summary: Optional[str] = None,
+        next_summary: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Analyze clip using Gemini via OpenRouter API.
+        
+        Args:
+            clip_path: Path to the extracted clip file.
+            clip_id: Identifier for this clip.
+            start_time: Clip start time in seconds.
+            end_time: Clip end time in seconds.
+            video_path: Path to the original full video (for fallback).
+            prev_summary: Summary from previous clip for fallback.
+            next_summary: Summary from next clip for fallback.
+            
+        Returns:
+            Dictionary containing parsed clip analysis.
+        """
+        # Convert clip to base64 for API call
+        clip_base64 = video_to_base64(clip_path)
+        
+        # Build message with video and prompt
+        message = build_multimodal_message(
+            text=PROMPT_CLIP_ANALYSIS,
+            video_base64=clip_base64
+        )
+        
+        # Call LLM
+        response, tokens = call_llm_with_retry(
+            model_name=self.model_name,
+            messages=[message],
+            temperature=0.1,
+            max_tokens=4096
+        )
+        
+        logger.debug(f"Clip {clip_id} Gemini analysis used {tokens} tokens")
+        
+        # Parse JSON response
+        try:
+            result = parse_json_response(response)
+            return result
+        except json.JSONDecodeError:
+            # Retry with stricter prompt
+            logger.warning(f"JSON parse failed for {clip_id}, retrying with strict prompt")
+            
+            message = build_multimodal_message(
+                text=PROMPT_CLIP_ANALYSIS_STRICT_JSON,
+                video_base64=clip_base64
+            )
+            
+            response, _ = call_llm_with_retry(
+                model_name=self.model_name,
+                messages=[message],
+                temperature=0.0,
+                max_tokens=4096
+            )
+            
+            try:
+                result = parse_json_response(response)
+                return result
+            except json.JSONDecodeError:
+                logger.warning(f"JSON parse still failed for {clip_id}, using fallback")
+                return self._create_fallback_result(
+                    response=response,
+                    clip_id=clip_id,
+                    start_time=start_time,
+                    end_time=end_time,
+                    video_path=video_path,
+                    prev_summary=prev_summary,
+                    next_summary=next_summary
+                )
     
     def cleanup(self) -> None:
         """Clean up temporary files."""
@@ -887,33 +1022,3 @@ def process_video_to_nodes(
     
     return all_nodes, metadata
 
-
-if __name__ == "__main__":
-    # Test video processor
-    import sys
-    
-    logging.basicConfig(level=logging.INFO)
-    
-    if len(sys.argv) < 2:
-        print("Usage: python video_processor.py <video_path> [max_clips]")
-        sys.exit(1)
-    
-    video_path = sys.argv[1]
-    max_clips = int(sys.argv[2]) if len(sys.argv) > 2 else 1
-    
-    print(f"Processing video: {video_path}")
-    print(f"Max clips: {max_clips}")
-    
-    nodes, metadata = process_video_to_nodes(video_path, max_clips=max_clips)
-    
-    print(f"\nResults:")
-    print(f"  Clips processed: {metadata['num_clips_processed']}")
-    print(f"  Nodes created: {metadata['num_nodes_created']}")
-    print(f"  Processing time: {metadata['processing_time_sec']:.2f}s")
-    
-    for node in nodes:
-        print(f"\nNode {node.node_id}:")
-        print(f"  Time: {node.time_start:.1f}s - {node.time_end:.1f}s")
-        print(f"  Summary: {node.summary_text}")
-        print(f"  Persons: {node.persons}")
-        print(f"  Objects: {node.objects}")
