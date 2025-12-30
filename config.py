@@ -100,8 +100,21 @@ class PipelineConfig:
         self.navigation_max_hops: int = 3
         self.max_visited_nodes: int = 50
         
-        # API settings
-        self.llm_model_clip_analysis: str = "google/gemini-2.5-pro"
+        # Multimodal model provider selection for clip analysis
+        # Options: "qwen" (local Qwen2.5-Omni-3B) or "gemini" (OpenRouter API)
+        self.multimodal_provider: str = "qwen"
+        
+        # Qwen-specific settings (used when multimodal_provider is "qwen")
+        self.qwen_model_path: str = "Qwen/Qwen2.5-Omni-3B"
+        self.qwen_use_audio_in_video: bool = True
+        self.qwen_use_flash_attention: bool = True
+        self.qwen_temperature: float = 0.1
+        self.qwen_max_new_tokens: int = 4096
+        
+        # Gemini-specific settings (used when multimodal_provider is "gemini")
+        self.gemini_model: str = "google/gemini-2.5-pro"
+        
+        # API LLM models for other tasks
         self.llm_model_summarization: str = "openai/gpt-4o"
         self.llm_model_question_typing: str = "openai/gpt-4o-mini"
         self.llm_model_verification: str = "openai/gpt-4o"
@@ -128,6 +141,18 @@ class PipelineConfig:
         # Apply custom config if provided
         if config_dict:
             self.update(config_dict)
+    
+    def get_clip_analysis_model(self) -> str:
+        """
+        Get the model name for clip analysis based on multimodal_provider setting.
+        
+        Returns:
+            Model name string for clip analysis.
+        """
+        if self.multimodal_provider == "qwen":
+            return self.qwen_model_path
+        else:
+            return self.gemini_model
     
     def update(self, config_dict: Dict[str, Any]) -> None:
         """
@@ -219,13 +244,3 @@ def set_pipeline_config(config: PipelineConfig) -> None:
     global _pipeline_config
     _pipeline_config = config
 
-
-if __name__ == "__main__":
-    # Test configuration loading
-    api_config = get_api_config()
-    print("API Config models:", list(api_config.keys()))
-    
-    pipeline_config = get_pipeline_config()
-    print("\nPipeline Config:")
-    for key, value in pipeline_config.to_dict().items():
-        print(f"  {key}: {value}")
