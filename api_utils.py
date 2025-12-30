@@ -499,34 +499,3 @@ def parse_json_list_response(response: str) -> List[Any]:
     
     return json.loads(text)
 
-
-if __name__ == "__main__":
-    # Test API utilities
-    logging.basicConfig(level=logging.INFO)
-    
-    # Test text embedding
-    print("Testing embedding generation...")
-    try:
-        embeddings = get_embedding_with_retry(
-            "openai/text-embedding-3-large",
-            ["Hello, world!", "This is a test."]
-        )
-        print(f"Got {len(embeddings)} embeddings, dimension: {len(embeddings[0])}")
-    except Exception as e:
-        print(f"Embedding test failed: {e}")
-    
-    # Test simple LLM call
-    print("\nTesting LLM call...")
-    try:
-        messages = [
-            build_text_message("Say 'Hello' and nothing else.", "user")
-        ]
-        response, tokens = call_llm_with_retry(
-            "openai/gpt-4o-mini",
-            messages,
-            max_tokens=50
-        )
-        print(f"Response: {response}")
-        print(f"Tokens used: {tokens}")
-    except Exception as e:
-        print(f"LLM test failed: {e}")

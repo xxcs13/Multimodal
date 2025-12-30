@@ -446,12 +446,3 @@ def format_actions_for_prompt(actions: list) -> str:
     
     return "; ".join(formatted)
 
-
-if __name__ == "__main__":
-    # Test prompt formatting
-    test_events = [
-        {"time_start": 0.0, "time_end": 5.0, "summary_text": "A person enters the room"},
-        {"time_start": 5.0, "time_end": 10.0, "summary_text": "They pick up a book from the table"},
-    ]
-    print("Formatted events:")
-    print(format_events_for_context(test_events))
