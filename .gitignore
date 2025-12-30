@@ -1,7 +1,5 @@
 __pycache__/
-.pytest_cache/
 data/
 docs/
 tests/
 .env
-rule.md
