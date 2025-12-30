@@ -1,0 +1,8 @@
+{
+    "ckpt": "Qwen/Qwen2.5-Omni-3B",
+    "temperature": 0.1,
+    "max_retries": 3,
+    "use_audio_in_video": true,
+    "use_flash_attention": true,
+    "max_new_tokens": 4096
+}
