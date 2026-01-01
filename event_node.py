@@ -82,13 +82,25 @@ class AdaptiveEventNode:
         parts = [self.summary_text]
         
         if self.dialogue_snippets:
-            parts.append(" ".join(self.dialogue_snippets))
+            # Ensure all items are strings
+            dialogue_strs = []
+            for d in self.dialogue_snippets:
+                if isinstance(d, str):
+                    dialogue_strs.append(d)
+                elif isinstance(d, dict):
+                    text = d.get("utterance", d.get("text", d.get("content", "")))
+                    if text:
+                        dialogue_strs.append(str(text))
+                else:
+                    dialogue_strs.append(str(d))
+            if dialogue_strs:
+                parts.append(" ".join(dialogue_strs))
         
         if self.persons:
-            parts.append(" ".join(self.persons))
+            parts.append(" ".join(str(p) for p in self.persons))
         
         if self.objects:
-            parts.append(" ".join(self.objects))
+            parts.append(" ".join(str(o) for o in self.objects))
         
         return " ".join(parts)
     
@@ -304,8 +316,20 @@ class EventNodeFactory:
             else:
                 objects.append(str(obj))
         
-        # Extract dialogue
-        dialogue = event_data.get("dialogue", [])
+        # Extract dialogue - ensure all items are strings
+        dialogue_raw = event_data.get("dialogue", [])
+        dialogue = []
+        for d in dialogue_raw:
+            if isinstance(d, str):
+                dialogue.append(d)
+            elif isinstance(d, dict):
+                # Extract text from dict (could be utterance, text, or content)
+                text = d.get("utterance", d.get("text", d.get("content", "")))
+                if text:
+                    dialogue.append(str(text))
+            else:
+                # Convert to string as fallback
+                dialogue.append(str(d))
         
         # Extract actions
         actions = event_data.get("actions", [])
