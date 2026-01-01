@@ -212,14 +212,22 @@ def analyze_video_with_qwen(
     
     # Generate response (text only, no audio output)
     with torch.no_grad():
-        text_ids = model.generate(
+        # For deterministic output (temperature close to 0), use greedy decoding
+        do_sample = temperature > 0.01
+        
+        generation_kwargs = {
             **inputs,
-            use_audio_in_video=use_audio_in_video,
-            return_audio=False,
-            max_new_tokens=max_new_tokens,
-            do_sample=True,
-            temperature=temperature
-        )
+            "use_audio_in_video": use_audio_in_video,
+            "return_audio": False,
+            "max_new_tokens": max_new_tokens,
+            "do_sample": do_sample,
+        }
+        
+        # Only add temperature when sampling is enabled
+        if do_sample:
+            generation_kwargs["temperature"] = temperature
+        
+        text_ids = model.generate(**generation_kwargs)
         
         # Decode the generated tokens
         generate_ids = text_ids[:, inputs.input_ids.size(1):]
@@ -288,14 +296,21 @@ def get_response(messages: List[Dict[str, Any]]) -> Tuple[str, int]:
     
     # Generate response
     with torch.no_grad():
-        text_ids = model.generate(
+        # For deterministic output (temperature close to 0), use greedy decoding
+        do_sample = temperature > 0.01
+        
+        generation_kwargs = {
             **inputs,
-            use_audio_in_video=use_audio_in_video,
-            return_audio=False,
-            max_new_tokens=max_new_tokens,
-            do_sample=True,
-            temperature=temperature
-        )
+            "use_audio_in_video": use_audio_in_video,
+            "return_audio": False,
+            "max_new_tokens": max_new_tokens,
+            "do_sample": do_sample,
+        }
+        
+        if do_sample:
+            generation_kwargs["temperature"] = temperature
+        
+        text_ids = model.generate(**generation_kwargs)
         
         generate_ids = text_ids[:, inputs.input_ids.size(1):]
         response = processor.batch_decode(
