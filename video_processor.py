@@ -255,11 +255,21 @@ class ClipAnalyzer:
         """
         from qwen_provider import analyze_video_with_qwen
         
+        # Calculate clip duration
+        clip_duration_sec = end_time - start_time
+        
+        # Format prompt with clip context
+        formatted_prompt = PROMPT_CLIP_ANALYSIS.format(
+            clip_id=clip_id,
+            clip_duration_sec=clip_duration_sec,
+            clip_global_start_sec=start_time
+        )
+        
         try:
             # Call Qwen model with clip path directly (supports audio)
             response, tokens = analyze_video_with_qwen(
                 video_path=clip_path,
-                prompt=PROMPT_CLIP_ANALYSIS
+                prompt=formatted_prompt
             )
             
             logger.debug(f"Clip {clip_id} Qwen analysis used {tokens} tokens")
@@ -275,7 +285,7 @@ class ClipAnalyzer:
                 response, _ = analyze_video_with_qwen(
                     video_path=clip_path,
                     prompt=PROMPT_CLIP_ANALYSIS_STRICT_JSON,
-                    temperature=0.0
+                    temperature=0.01  # Must be > 0 for Qwen with do_sample=True
                 )
                 
                 try:
@@ -334,9 +344,19 @@ class ClipAnalyzer:
         # Convert clip to base64 for API call
         clip_base64 = video_to_base64(clip_path)
         
+        # Calculate clip duration
+        clip_duration_sec = end_time - start_time
+        
+        # Format prompt with clip context
+        formatted_prompt = PROMPT_CLIP_ANALYSIS.format(
+            clip_id=clip_id,
+            clip_duration_sec=clip_duration_sec,
+            clip_global_start_sec=start_time
+        )
+        
         # Build message with video and prompt
         message = build_multimodal_message(
-            text=PROMPT_CLIP_ANALYSIS,
+            text=formatted_prompt,
             video_base64=clip_base64
         )
         
@@ -366,7 +386,7 @@ class ClipAnalyzer:
             response, _ = call_llm_with_retry(
                 model_name=self.model_name,
                 messages=[message],
-                temperature=0.0,
+                temperature=0.01,  # Use low but positive temperature
                 max_tokens=4096
             )
             
@@ -389,8 +409,10 @@ class ClipAnalyzer:
         """Clean up temporary files."""
         if self._temp_dir and os.path.exists(self._temp_dir):
             import shutil
+            logger.info(f"Cleaning up temporary directory: {self._temp_dir}")
             shutil.rmtree(self._temp_dir)
             self._temp_dir = None
+            logger.info("Temporary directory removed successfully")
     
     def _try_json_repair(
         self,
@@ -423,6 +445,15 @@ class ClipAnalyzer:
             )
             
             result = parse_json_response(response)
+            
+            # Validate that result is a dictionary (not string, array, etc.)
+            if not isinstance(result, dict):
+                logger.warning(
+                    f"JSON repair for {clip_id} returned {type(result).__name__}, "
+                    "expected dict"
+                )
+                return None
+            
             logger.info(f"JSON repair successful for {clip_id}")
             return result
             
@@ -673,20 +704,14 @@ class ClipAnalyzer:
         return {
             "clip_summary": description,
             "events": [{
+                "local_event_id": "E1",
                 "summary": description,
-                "time_within_clip_start": 0.0,
-                "time_within_clip_end": end_time - start_time,
-                "characters_involved": characters[:3] if characters else [],
-                "objects_mentioned": [],
-                "key_actions": [],
-                # "local_event_id": "E1",
-                # "summary": description,
-                # "time_start": 0.0,
-                # "time_end": end_time - start_time,
-                # "actors": characters[:3] if characters else [],
-                # "objects": [],
+                "time_start": 0.0,
+                "time_end": end_time - start_time,
+                "actors": characters[:3] if characters else [],
+                "objects": [],
                 "dialogue": dialogues[:5] if dialogues else [],
-                # "actions": []
+                "actions": []
             }],
             "characters": [
                 {"local_character_id": f"C{i+1}", "name_or_description": desc}
@@ -857,16 +882,39 @@ class VideoProcessor:
             if char_id:
                 characters_map[char_id] = char_desc
         
+        # Extract speaker_turns for dialogue merging
+        speaker_turns = analysis.get("speaker_turns", [])
+        
         # Create event nodes
         nodes = []
         scene_type = analysis.get("scene_type", "")
         
         for event_data in analysis.get("events", []):
+            # Get event time range (clip-local times)
+            event_start = event_data.get("time_start", 0.0)
+            event_end = event_data.get("time_end", event_start)
+            
+            # Merge dialogue from speaker_turns that overlap with this event's time range
+            # This fixes the issue where LLM puts dialogue in speaker_turns, not in event.dialogue
+            event_dialogue = list(event_data.get("dialogue", []))
+            for turn in speaker_turns:
+                turn_start = turn.get("time_start", 0.0)
+                turn_end = turn.get("time_end", turn_start)
+                # Check for time overlap between speaker turn and event
+                if turn_start < event_end and turn_end > event_start:
+                    utterance = turn.get("utterance", "")
+                    if utterance and utterance not in event_dialogue:
+                        event_dialogue.append(utterance)
+            
+            # Update event_data with merged dialogue before creating node
+            event_data_with_dialogue = dict(event_data)
+            event_data_with_dialogue["dialogue"] = event_dialogue
+            
             node = self.node_factory.create_node_from_llm_output(
                 video_id=self.video_id,
                 clip_id=clip_id,
                 clip_time_start=start_time,
-                event_data=event_data,
+                event_data=event_data_with_dialogue,
                 scene_type=scene_type,
                 characters_map=characters_map
             )
@@ -884,7 +932,8 @@ class VideoProcessor:
                 scene_type=scene_type,
                 dialogue_snippets=[
                     turn.get("utterance", "")
-                    for turn in analysis.get("speaker_turns", [])
+                    for turn in speaker_turns
+                    if turn.get("utterance")
                 ],
                 persons=[
                     char.get("name_or_description", "")
@@ -892,6 +941,17 @@ class VideoProcessor:
                 ]
             )
             nodes.append(node)
+        
+        # Log coverage statistics
+        if nodes:
+            actual_end = max(n.time_end for n in nodes) - start_time
+            expected_duration = end_time - start_time
+            coverage_ratio = actual_end / expected_duration if expected_duration > 0 else 0
+            if coverage_ratio < 0.9:
+                logger.warning(
+                    f"Low coverage for {clip_id}: {actual_end:.1f}s / {expected_duration:.1f}s "
+                    f"({coverage_ratio*100:.1f}%)"
+                )
         
         logger.info(f"Created {len(nodes)} event nodes from clip {clip_id}")
         
