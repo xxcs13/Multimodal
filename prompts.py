@@ -10,112 +10,159 @@ All prompts are designed to be general and not task-specific.
 # Video Clip Analysis Prompts
 # =============================================================================
 
-PROMPT_CLIP_ANALYSIS = """You are analyzing a video clip to extract structured information about events, characters, dialogue, and objects.
+PROMPT_CLIP_ANALYSIS = """You are a multimodal video analysis system.
 
-Analyze this video clip and return a JSON object with the following structure. Focus on what is visible and audible in the clip.
+=================================
+CRITICAL TIME CONTEXT
+=================================
+
+You are analyzing:
+- Clip ID: {clip_id}
+- Clip Duration: {clip_duration_sec:.1f} seconds
+- Global Start Time: {clip_global_start_sec:.1f}s (in the full video)
+
+ALL TIMESTAMPS you output MUST be CLIP-LOCAL (ranging from 0.0 to {clip_duration_sec:.1f}).
+Do NOT use global video timestamps.
+
+=================================
+HARD REQUIREMENTS
+=================================
+
+COVERAGE REQUIREMENTS:
+1. Your events MUST collectively cover the ENTIRE clip duration [0.0, {clip_duration_sec:.1f}].
+2. Total time gaps between events must be <= 1.0 second.
+3. If a segment has no significant action, create a "background_continuation" event to fill the gap.
+4. Events should be consecutive and non-overlapping.
+5. Typical event duration: 2-10 seconds. Adjust based on content.
+
+DIALOGUE REQUIREMENTS:
+1. If ANY speech is audible, speaker_turns MUST NOT be empty.
+2. Transcribe ALL dialogue VERBATIM (word-for-word, no summarizing).
+3. For speakers visible on screen: use their character ID (C1, C2, etc.).
+4. For speakers NOT visible on screen: use OFFSCREEN_1, OFFSCREEN_2, etc.
+5. Do NOT use descriptive sentences like "The woman talks about..." - transcribe actual words.
+
+=================================
+JSON SCHEMA SPECIFICATION
+=================================
+
+You must output ONE valid JSON object with these fields:
+
+clip_summary (string)
+- 1-2 sentence summary of main activities in this clip.
+
+scene_type (string)
+- Environment type (indoor_living, outdoor_street, office, kitchen, bedroom, etc.).
+
+characters (array)
+- Only list VISIBLE characters on screen.
+- Fields:
+  - local_character_id (string): C1, C2, etc.
+  - role (string): speaker, observer, or other.
+  - name_or_description (string): Name if mentioned in audio, otherwise appearance description.
+
+speaker_turns (array)
+- Each entry = one continuous spoken segment.
+- Fields:
+  - speaker_id (string): Character ID (C1, C2) or OFFSCREEN_1, OFFSCREEN_2 for off-screen speakers.
+  - utterance (string): EXACT verbatim dialogue (no paraphrasing).
+  - time_start (number): Clip-local start time (0.0 to {clip_duration_sec:.1f}).
+  - time_end (number): Clip-local end time.
+
+events (array)
+- Each entry = a distinct action, interaction, or occurrence.
+- Fields:
+  - local_event_id (string): E1, E2, etc.
+  - time_start (number): Clip-local start time.
+  - time_end (number): Clip-local end time.
+  - summary (string): What happened in this event.
+  - actors (array of strings): Character IDs involved (can be empty for pure environmental events).
+  - objects (array):
+      - name (string): Object name.
+      - spatial_description (string): Position using: above, below, left of, right of, in front of, behind, on top of, next to, inside, leaning against.
+  - dialogue (array of strings): Dialogue during this event (if any).
+  - actions (array):
+      - actor (string): Character ID.
+      - verb (string): Action verb (pick up, open, point at, walk, sit, etc.).
+      - object (string): Target object (if applicable).
+      - spatial_relation (string): Spatial relation FROM THE ACTOR'S PERSPECTIVE.
+
+=================================
+SPATIAL CONSTRAINTS
+=================================
+
+1. Describe positions from the ACTOR'S perspective, NOT the camera's.
+2. Use ONLY relative spatial terms.
+3. Capture object state changes (picked up, put down, opened, closed, moved).
+
+=================================
+OUTPUT FORMAT
+=================================
+
+- Output ONLY valid JSON.
+- Start with {{ and end with }}.
+- No explanations, comments, markdown, or extra text.
+"""
+
+
+PROMPT_CLIP_ANALYSIS_STRICT_JSON = """Analyze video clip and return ONLY valid JSON. No explanations, no markdown, just JSON.
+
+
+CRITICAL CONSTRAINTS:
+- ALL timestamps MUST be CLIP-LOCAL (0.0 to clip duration, NOT global timestamps)
+- Events MUST cover the ENTIRE clip duration with minimal gaps
+- Transcribe ALL dialogue VERBATIM - no paraphrasing
+- For off-screen speakers, use OFFSCREEN_1, OFFSCREEN_2, etc.
 
 Required JSON structure:
-{
-  "clip_summary": "A brief 1-2 sentence summary of the main activity in this clip",
-  "scene_type": "The type of scene (e.g., indoor_living, outdoor_street, office, kitchen, bedroom, etc.)",
+{{
+  "clip_summary": "1-2 sentence summary",
+  "scene_type": "environment type",
   "characters": [
-    {
-      "local_character_id": "C1",
-      "role": "speaker/observer/other",
-      "name_or_description": "Description of appearance or name if mentioned"
-    }
+    {{"local_character_id": "C1", "role": "speaker/observer", "name_or_description": "..."}}  
   ],
   "speaker_turns": [
-    {
-      "speaker_id": "S1",
-      "utterance": "The spoken text",
-      "time_start": 0.0,
-      "time_end": 5.0
-    }
+    {{"speaker_id": "C1", "utterance": "exact words", "time_start": 0.0, "time_end": 3.0}}
   ],
   "events": [
-    {
+    {{
       "local_event_id": "E1",
       "time_start": 0.0,
-      "time_end": 10.0,
-      "summary": "What happened in this event",
+      "time_end": 5.0,
+      "summary": "what happened",
       "actors": ["C1"],
-      "objects": [
-        {
-          "name": "object name",
-          "spatial_description": "relative position using terms like: above/below, left of/right of, in front of/behind, on top of/next to"
-        }
-      ],
-      "dialogue": ["Any relevant dialogue in this event"],
-      "actions": [
-        {
-          "actor": "C1",
-          "verb": "action verb",
-          "object": "target object",
-          "spatial_relation": "spatial context from the actor's perspective"
-        }
-      ]
-    }
+      "objects": [{{"name": "...", "spatial_description": "..."}}],
+      "dialogue": ["utterances during this event"],
+      "actions": [{{"actor": "C1", "verb": "...", "object": "...", "spatial_relation": "..."}}]
+    }}
   ]
-}
+}}
 
-Important requirements:
-1. Use relative spatial relations (above, below, left of, right of, in front of, behind, on top of, next to, inside, leaning against) for describing object positions
-2. Describe positions from the actor's perspective, not the camera's perspective
-3. Include actual spoken dialogue when audible, with accurate transcription
-4. Identify all visible characters and assign them local IDs (C1, C2, etc.)
-5. Capture state changes of objects (picked up, put down, opened, closed, moved, etc.)
-6. Each event should represent a distinct action or occurrence
-
-Return ONLY the JSON object with no additional text, explanations, or markdown formatting."""
-
-
-PROMPT_CLIP_ANALYSIS_STRICT_JSON = """You must analyze this video clip and return ONLY a valid JSON object. No explanations, no markdown, just JSON.
-
-Return a JSON object with these exact keys:
-- clip_summary (string): 1-2 sentence summary
-- scene_type (string): type of scene
-- characters (array): list of character objects with local_character_id, role, name_or_description
-- speaker_turns (array): list of speech objects with speaker_id, utterance, time_start, time_end
-- events (array): list of event objects
-
-Each event object must have:
-- local_event_id (string)
-- time_start (number)
-- time_end (number)  
-- summary (string)
-- actors (array of strings)
-- objects (array of objects with name and spatial_description)
-- dialogue (array of strings)
-- actions (array of action objects with actor, verb, object, spatial_relation)
-
-Describe spatial relations from the actor's viewpoint. Include actual spoken dialogue.
-
-Return ONLY valid JSON, starting with { and ending with }."""
+Return ONLY valid JSON, starting with {{ and ending with }}."""
 
 
 # =============================================================================
 # Event Summarization Prompts
 # =============================================================================
 
-PROMPT_EVENT_SUMMARIZATION = """Create a concise, information-dense summary of this event that captures the key details for memory retrieval and question answering.
+PROMPT_EVENT_SUMMARIZATION = """Create a concise summary for memory retrieval and question answering.
 
-Event information:
+Event context:
+- Time range: {time_start:.1f}s - {time_end:.1f}s
 - Scene type: {scene_type}
-- Event summary: {event_summary}
-- Actors involved: {actors}
-- Objects present: {objects}
+- Event: {event_summary}
+- Actors: {actors}
+- Objects: {objects}
 - Dialogue: {dialogue}
 - Actions: {actions}
 
 Requirements:
-1. Produce 1-2 short sentences maximum
-2. Include the main behavior/action if present
-3. Include key spatial configuration if relevant
-4. Include important dialogue intent if speech occurred
-5. Write in a way useful for later retrieval and question answering
-6. Avoid redundant wording and filler phrases
-7. Use character descriptions or IDs consistently
+1. Produce 1-2 short sentences maximum.
+2. Include the main action or behavior.
+3. Include key spatial details if relevant.
+4. Include dialogue content (not just "someone spoke") if speech occurred.
+5. Use character descriptions consistently.
+6. Avoid filler phrases.
 
 Summary:"""
 
